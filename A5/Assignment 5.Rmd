@@ -1,0 +1,107 @@
+---
+title: "Assignment 5"
+author: "Scott Girten"
+date: "11/19/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+
+train_data = read_csv('coding5_train.csv')
+test_data = read_csv('coding5_test.csv')
+
+train_x = train_data[, 1:256]
+train_y = train_data[, 257]
+# recode labels at -1 and 1 for and 5 and 6 respectively
+train_y = if_else(train_y == 5, -1, 1)
+
+test_x = test_data[, 1:256]
+intercept_test = rep(1, nrow(test_x))
+test_x = cbind(intercept_test, test_x)
+
+test_y = test_data[, 257]
+test_y = if_else(test_y == 5,  -1, 1)
+
+x = as.matrix(train_x)
+y = as.matrix(train_y)
+epochs = 20
+
+#my_pegasos = function(x, y, learning_rate=0.01, epochs=20, lambda=1){
+  # Initalize Beta, alpha and t
+  B = matrix(0, nrow = 1, ncol = ncol(x))
+  #B = matrix(0, nrow = ncol(x), ncol = 1)
+  a = 0
+  t = 0
+  
+  # add intercept term to X matrix
+  intercept = rep(1, nrow(x))
+  X_ = cbind(intercept, x)
+  Y_ = y
+
+  n = nrow(x)
+  epoch = 2
+  lambda = 1
+  results = tibble()
+  
+  for(epoch in 1:epochs){
+    # Set random index order for randomizing data points
+    
+    set.seed(100 + epoch*10) # set seed for each epoch
+    idx = sample(1:nrow(x))  # list of index to shuffle by
+    x = x[idx, ]             # shuffle data
+    y= as.matrix(y[idx])     # shuffle labels
+    
+    for(i in 1:n){
+      t = t+1
+      #lambda = lambda
+      eta = 1/(t*lambda)
+      
+      i = 2
+      #subgradient = y[i]*(t(x[i,])%*%B + a)
+      subgradient = y[i] * (B %*% x[i, ] + a)
+      if(subgradient < 1){
+        delta_t = lambda*B - y[i]*x[i, ]
+        gamma_t = -1*y[i]
+      }
+      else{
+        delta_t = lambda*B
+        gamma_t = 0
+        
+      }
+      
+      B = B - eta*delta_t
+      a = a - eta*gamma_t
+      
+    }
+    # B_ = cbind(a, B)
+    # # prediction for each epoch
+    # pred_train = B_ %*% t(X_)
+    # pred_test = B_ %*% t(as.matrix(test_x))
+    # 
+    #result = tibble()
+    
+    
+  }
+    B_ = cbind(a, B)
+    # prediction for each epoch
+    pred_train = B_ %*% t(X_)
+    pred_test = B_ %*% t(as.matrix(test_x))
+    
+    pred_train2 = if_else(pred_train > 0, 1, -1)
+    pred_test2 = if_else(pred_test > 0, 1, -1)
+    
+    table(train_y, pred_train2)
+    table(test_y, pred_test2)
+    
+
+
+
+
+#}
+```
+

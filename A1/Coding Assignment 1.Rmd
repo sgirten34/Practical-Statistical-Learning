@@ -1,0 +1,420 @@
+---
+title: "Coding Assignment 1"
+author: "Scott Girten"
+date: "8/29/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
+
+options(dplyr.summarise.inform = FALSE)
+
+```
+
+Scott Girten  
+NetID: sgirten2
+
+
+
+## Part 1: Generate Data
+
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+
+seed = 2021
+size = 20
+
+set.seed(seed)
+center0 = tibble(x1 = rep(rnorm(size/2, mean = 1, sd = 1)),
+                 x2 = rep(rnorm(size/2, mean = 0, sd = 1)),
+                 Class = factor(0))
+set.seed(seed)
+center1 = tibble(x1 = rep(rnorm(size/2, mean = 0, sd = 1)),
+                 x2 = rep(rnorm(size/2, mean = 1, sd = 1)),
+                 Class = factor(1))
+centers = center0 %>% bind_rows(center1)
+
+
+# Generate training and testing data
+size_train = 10
+size_test = 500
+
+
+# Training data
+set.seed(seed)
+train = centers %>% 
+  slice(rep(1:n(), size_train)) %>% 
+  mutate(x1_noise = rnorm(size*size_train),
+         x2_noise = rnorm(size*size_train)) %>% 
+  mutate(x1 = x1 + x1_noise,
+         x2 = x2 + x2_noise) %>% 
+  select(-c(x1_noise, x2_noise))
+
+
+# Testing data
+set.seed(seed)
+test = centers %>% 
+  slice(rep(1:n(), size_test)) %>% 
+  mutate(x1_noise = rnorm(size*size_test),
+         x2_noise = rnorm(size*size_test)) %>% 
+  mutate(x1 = x1 + x1_noise,
+         x2 = x2 + x2_noise) %>% 
+  select(-c(x1_noise, x2_noise))
+
+
+
+# Scatter plot
+p = ggplot(train, aes(x = x1, y = x2, color = Class)) +
+  geom_point(alpha = 0.7) +
+  geom_point(data = centers, aes(x = x1, y = x2,  color = Class), shape = 8, size = 4) +
+  scale_color_manual(values = c('#e78ac3', '#a6d854')) +
+  theme_minimal() +
+  labs(title = 'Randomly Generated Training Data and Distribution Centers')
+
+p
+
+
+```
+
+
+***
+
+## Part 2: kNN From Scratch
+
+```{r message=FALSE, warning=FALSE}
+library(class)
+
+# Euclidean distance function
+# dist_euclidean = function(test_x, b){
+#   return(sum(a-b)^2)
+# }
+
+# kNN function
+my_knn = function(test, train, k){
+  
+  #k = 3
+  
+  # Get length of train and test observations
+  train_length = dim(train)[1]
+  test_length = dim(test)[1]
+  
+  # add _test or _train suffix to column names
+  test = test %>% rename_with(.fn = function(.x){paste0(.x, "_test")})
+  train = train %>% rename_with(.fn = function(.x){paste0(.x, "_train")})
+  
+  # Create data frame with all possible combinations of test and train data to calculate distance
+  # Repeat test data
+  tmp = test %>% 
+    mutate(test_id = row_number()) %>% 
+    slice(rep(1:n(), each = train_length))
+  
+  # Repeat train data
+  train_tmp = map_dfr(seq_len(test_length), ~train)
+  
+  # Combine test and train data into one data frame
+  tmp = tmp %>% 
+    bind_cols(train_tmp)
+  
+  # Calculate euclidean distance 
+  tmp = tmp %>% 
+    rowwise() %>% 
+    mutate(distance = sum( (x1_test - x1_train)^2, (x2_test - x2_train)^2 ))
+  
+  # Get neighbor count for prediction 
+  output = tmp %>% 
+    group_by(test_id) %>% 
+    arrange(distance) %>% 
+    slice_head(n = k) %>% 
+    group_by(test_id, Class_train) %>% 
+    summarise(class_count = n(),) %>% 
+    arrange(test_id, desc(class_count)) %>% 
+    slice_head(n = 1)
+    
+    
+  return(output$Class_train)
+}
+
+# Preparing data for use in knn function
+knn_test = test %>% select(x1, x2)
+knn_train = train %>% select(x1, x2)
+knn_cl = train$Class
+
+# Labels for test data
+test_class = test$Class
+
+
+
+```
+
+**Voting and Distance Ties:**  In the event of a tie (either distance or voting), I would randomly pick one of the two classes to resolve the tie.    
+
+
+### Compare implementation vs. knn()
+
+#### k = 1
+```{r message=FALSE, warning=FALSE}
+
+my_predicted_class_k1 = my_knn(test = test, train = train, k = 1)
+knn_1 = knn(train = knn_train, test = knn_test, cl = knn_cl, k = 1)
+
+table(test_class, my_predicted_class_k1)
+
+```
+
+```{r}
+table(test_class, knn_1)
+```
+
+#### k = 3
+```{r}
+
+my_predicted_class_k3 = my_knn(test = test, train = train, k = 3)
+knn_3 = knn(train = knn_train, test = knn_test, cl = knn_cl, k = 3)
+
+table(test_class, my_predicted_class_k3)
+
+```
+
+```{r}
+table(test_class, knn_3)
+```
+
+#### k = 5
+```{r message=FALSE, warning=FALSE}
+
+my_predicted_class_k5 = my_knn(test = test, train = train, k = 5)
+knn_5 = knn(train = knn_train, test = knn_test, cl = knn_cl, k = 5)
+
+table(test_class, my_predicted_class_k5)
+
+```
+
+```{r}
+table(test_class, knn_5)
+```
+
+***
+
+## Part 3: cvKNN From Scratch
+
+```{r}
+fold = seq(from = 0,  to = 200, by = 20)
+my_k = c(1:180)
+
+my_cv_k = function(train, cl, fold, k){
+
+  # vector for storing CV error
+  cv_error = rep(0, length(my_k))
+  
+  
+  for(i in 1:length(my_k)){
+    for(j in 1:(length(fold)-1)) {
+      
+      # row numbers of the ith fold
+      ith.fold = c((fold[j]+1):fold[j+1])
+      
+      # kNN for fold and k combination
+      tmp = knn(train = train[-ith.fold,], test = train[ith.fold,], cl = cl[-ith.fold], k = my_k[i])
+       
+      # update error vector
+      cv_error[i] = cv_error[i]+sum(tmp != cl[ith.fold])
+    }
+  }
+  
+  best_k = tibble(K_value = my_k,
+                  CV_Error = cv_error) %>% 
+    # Smallest error and largest k-value as tie breaker
+    arrange(CV_Error, desc(K_value)) %>% 
+    slice_head(n = 1)
+  
+  return(best_k$K_value)
+
+}
+
+best_k = my_cv_k(train = knn_train, cl = knn_cl, fold = fold, k = my_k)
+
+# Run model on test and train data 
+cv_knn = knn(train = knn_train, test = knn_test, cl = knn_cl, k = best_k)
+
+# Confusion matrix
+table(test_class, cv_knn)
+
+```
+
+Selected value of K: `r best_k`
+
+
+***
+
+## Part 4: Bayes Rule
+
+```{r message=FALSE, warning=FALSE}
+
+my_bayes = function(centers, test){
+  
+    # Get length of train and test observations
+  center_length = dim(centers)[1]
+  test_length = dim(test)[1]
+  
+  # add _test or _train suffix to column names
+  test = test %>% rename_with(.fn = function(.x){paste0(.x, "_test")})
+  centers = centers %>% rename_with(.fn = function(.x){paste0(.x, "_center")})
+  
+  # Create data frame with all possible combinations of test and center data to calculate distance
+  # Repeat test data
+  tmp = test %>% 
+    mutate(test_id = row_number()) %>% 
+    slice(rep(1:n(), each = center_length))
+  
+  # Repeat train data
+  center_tmp = map_dfr(seq_len(test_length), ~centers)
+  
+  # Combine test and train data into one data frame
+  tmp = tmp %>% 
+    bind_cols(center_tmp)
+  
+    # Calculate distance for each test data point to every center
+  tmp = tmp %>% 
+    rowwise() %>% 
+    mutate(class_prob = exp(-1*(sum( (x1_test - x1_center)^2, (x2_test - x2_center)^2 ) / (2*1)^2 )))
+  
+  
+  output = tmp %>% 
+    # Calculate mean probability for each class
+    group_by(test_id, Class_center) %>% 
+    summarise(avg_class_prob = mean(class_prob)) %>% 
+    # Get the class with the shortest mean distance to each test data point
+    group_by(test_id) %>% 
+    arrange(desc(avg_class_prob)) %>% 
+    slice_head(n = 1)
+  
+  return(output$Class_center)
+
+  
+}
+
+my_bayes_class = my_bayes(centers = centers, test = test)
+
+table(test_class, my_bayes_class)
+
+```
+
+
+***
+
+## Part 5: Simulation Study
+
+```{r}
+# General function for generating data
+size_train = 10
+size_test = 500
+size_center = 20
+
+my_data = function(centers, size_obs, size_centers){
+
+  # Generate data
+  data = centers %>% 
+    slice(rep(1:n(), size_obs)) %>% 
+    mutate(x1_noise = rnorm(size_centers*size_obs),
+           x2_noise = rnorm(size_centers*size_obs)) %>% 
+    mutate(x1 = x1 + x1_noise,
+           x2 = x2 + x2_noise) %>% 
+    select(-c(x1_noise, x2_noise))
+  
+  return(data)
+
+}
+
+# Begin simulation study
+iterations = 50
+
+# Data frame for holding results
+results = tibble(Iteration = seq(1:iterations),
+                 kNN_7 = rep(0,iterations),
+                 kNN_cv = rep(0,iterations),
+                 Bayes = rep(0,iterations),
+                 Selected_K = rep(0,iterations))
+
+
+fold = seq(from = 0,  to = 200, by = 20)
+my_k = c(1:180)
+
+#i =3
+
+for(i in 1:iterations){
+  # Generate data
+  train = my_data(centers = centers, size_obs = size_train, size_centers = size_center)
+  test =  my_data(centers = centers, size_obs = size_test, size_centers = size_center)
+  
+  train_class = train$Class
+  test_class = test$Class
+  
+  train = train %>% select(x1, x2)
+  test = test %>% select(x1, x2)
+  
+  
+  # R implementation of kNN, k = 7
+  r_knn = knn(train = train, test = test, cl = train_class, k = 7)
+  
+  results[i, "kNN_7"] = mean(r_knn != test_class)
+  
+  
+  # My implementation of k chosen by cross validation
+  best_k = my_cv_k(train = train, cl = train_class, fold = fold, k = my_k)
+  cv_knn = knn(train = train, test = test, cl = train_class, k = best_k)
+  
+  results[i, "Selected_K"] = best_k
+  results[i, "kNN_cv"] = mean(cv_knn != test_class)
+  
+  # My Bayes implementation
+  test_bayes = test %>% bind_cols(Class = test_class) # combine the test dataframe that was originaly split
+  
+  bayes = my_bayes(centers = centers, test = test_bayes)
+  results[i, "Bayes"] = mean(bayes != test_class)
+}
+
+# Boxplot
+df_bxp = results %>% 
+  select(kNN_7, kNN_cv, Bayes) %>% 
+  pivot_longer(cols = c(kNN_7, kNN_cv, Bayes))
+
+bxp = ggplot(df_bxp, aes(x = name, y = value, fill = name)) +
+  geom_boxplot(show.legend = FALSE) +
+  theme_minimal() +
+  scale_y_continuous(labels = scales::percent) +
+  scale_fill_manual(values = c('#66c2a5', '#fc8d62', '#8da0cb')) +
+  labs(x = NULL,
+       y = '0-1 Loss Percentage',
+       title = 'Comparison of Loss Performance for 3 Models')
+
+bxp
+```
+
+
+```{r}
+library(kableExtra)
+
+# 5 number summary
+k_summary = results %>% 
+  select(Selected_K) %>% 
+  summarise(Min = min(Selected_K),
+            Max = max(Selected_K),
+            Median = median(Selected_K),
+            `25% Quantile` = quantile(Selected_K, probs = 0.25),
+            `75% Quantile` = quantile(Selected_K, probs = 0.75))
+
+
+k_summary %>% 
+  kbl(caption = '5 Number Summary for Selected Values of k') %>% 
+  kable_styling()
+
+```
+
+
+
+

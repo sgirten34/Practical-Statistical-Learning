@@ -1,0 +1,511 @@
+---
+title: "Assignment_3_2021_sgirten2"
+author: "Scott Girten"
+date: "10/5/2023"
+output: 
+  html_document:
+    toc: TRUE
+    toc_float: TRUE
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Scott Girten  
+NetID: sgirten2
+
+
+# Part 1: Optimal Span for LOESS
+
+## Functions for Cross-Validation
+
+```{r  message=FALSE, warning=FALSE}
+library(tidyverse)
+
+#Functions
+
+# Smoothing matrix
+smooth.matrix = function(x, sp){
+  # Smoothing splines html file
+  # use spar argument instead of df?
+  n = length(x)
+  A = matrix(0, n, n)
+  for(i in 1:n){
+       y = rep(0, n); y[i]=1
+       yi = smooth.spline(x, y, spar = sp)$y
+       A[,i]= yi
+  }
+  S = ((A+t(A))/2)
+  
+  return(diag(S))
+  
+}
+
+# Cross validation
+onestepCV = function(x, y, sp){
+  # fit LOESS model with x, y and span
+  loess_resid = loess(y ~ x, data.frame(x, y), span = sp)$residuals
+  
+  # Get diagonal of smooth matrix  
+  S_diag = smooth.matrix(x, sp)
+  
+  # Average of the trace of S matrix
+  m = mean(S_diag)
+  
+  # Calculate LOOCV and GCV
+  loocv = mean( (loess_resid^2 / (1 - S_diag)^2) )
+  gcv = mean( (loess_resid^2 / (1-m)^2) )
+  
+  output = list(cv=loocv, gcv=gcv)
+  return(output)
+    
+}
+
+# Top level function accepting data and span values
+myCV = function(x, y, span){
+  
+  m = length(span)
+  cv = rep(0, m)
+  gcv = rep(0, m)
+  for(i in 1:m){
+    tmp = onestepCV(x, y, span[i])
+    cv[i] = tmp$cv
+    gcv[i] = tmp$gcv
+  }
+  output = list(cv=cv, gcv=gcv)
+  return(output)
+  
+}
+
+```
+
+
+## LOOCV and GCV for Span Values
+
+```{r cv selection, message=FALSE, warning=FALSE}
+
+# Read data in 
+df = read_csv('Coding3_Data.csv') 
+x1 = df$x
+y1 = df$y
+
+# Span values to test for CV
+span_values = seq(0.20, 0.90, 0.05)
+
+# Error terms for each span value
+myCV_selection = myCV(x1, y1, span_values) %>% 
+  bind_cols(span_values = span_values)
+
+
+# Plot CV Error
+df_p = myCV_selection %>% 
+  pivot_longer(cols = c(cv, gcv), names_to = 'CV Type', values_to = 'Error')
+
+highlight_color = '#8da0cb'
+
+p = ggplot(df_p, aes(x = span_values, y = Error, color = `CV Type`)) + 
+  geom_vline(xintercept = 0.65, color = highlight_color, linetype = 'dashed', size = 1) +
+  geom_line() +
+  annotate("text", x = 0.47, y = 300, label = '0.65 is the optimal span value for\nboth cross-validation procedures', color = highlight_color) +
+  scale_y_log10() +
+  scale_x_continuous(breaks = span_values) +
+  theme_minimal() +
+  labs(title = 'LOOCV and GCV Error for Span Values',
+       y = 'Error (log10)',
+       x = 'Span Value')
+
+p
+
+```
+
+```{r}
+# Optimal span value
+span_selection = 0.65
+
+# fit LOESS model
+loess_select = loess(y1 ~ x1, data.frame(x1, y1), span = span_selection)
+
+# Function for drawing true curve
+true_curve = function(x){
+  return( sin(12*(x + 0.2)) / (x + 0.2) )
+}
+
+# Plot
+p2 = ggplot(df, aes(x=x, y=y)) +
+  geom_point()+
+  geom_function(aes(x=x), fun = true_curve, color = 'red') + 
+  geom_line(aes(x = df$x, y = loess_select$fitted), color = 'blue') +
+  theme_minimal() +
+  labs(title = 'Smoothed Curve vs. True Curve')
+
+p2
+
+```
+
+
+# Part II: Clustering Time-Series
+
+## Read Data, F Matrix and B Matrix
+```{r read data, message=FALSE, warning=FALSE}
+library(splines)
+# clear memory
+rm(list = ls())
+
+# Read in data
+df_sales = read_csv('Sales_Transactions_Dataset_Weekly.csv')
+
+# Select columns needed
+X = df_sales %>% 
+  select(W0:W51)
+
+# Center data
+X = scale(X, center = TRUE, scale = FALSE) 
+
+
+weeks = 1:52
+
+F_mat = ns(weeks, df = 9, intercept = TRUE)
+
+B_t = solve(t(F_mat)%*%F_mat)%*%t(F_mat)%*%t(X)
+
+B = t(B_t)
+
+```
+
+## K-Means Clustering with Matrix B
+
+```{r kmeans clutering matrix B, message=FALSE, warning=FALSE}
+library(gghighlight)
+set.seed(2021)
+
+k_means = kmeans(B, centers = 6)
+
+
+B_cluster = data.frame(B) %>% 
+  bind_cols(cluster_id = k_means$cluster)
+
+B_centers = B_cluster %>% 
+  pivot_longer(cols = X1:X9, names_to = 'col_id', values_to = 'col_value') %>% 
+  group_by(cluster_id, col_id) %>% 
+  summarise(row_mean = mean(col_value))
+
+```
+
+## Helper Functions
+
+``` {r helper functions}
+
+# function to calculate cluster centers
+cluster_centers = function(B_centers, clust_id, F_mat){
+  # Filter for cluster id
+  b = B_centers %>% 
+  ungroup() %>% 
+  filter(cluster_id == clust_id) %>% 
+  select(row_mean)
+  
+  # Convert to matrix
+  b = as.matrix(b, nrow = 1, ncol = 9)
+  
+  # multiply by F matrix
+  center = F_mat%*%b
+  
+  # Format output
+  center = data.frame(center) %>% 
+    mutate(Week_Display = row_number() - 1) %>% 
+    rename(Sales = row_mean) %>% 
+    mutate(Product_Code = 'cluster_avg',
+           cluster_id = clust_id,
+           Week = str_c("W", Week_Display)) %>% 
+    relocate(Product_Code, cluster_id, Week, Sales, Week_Display)
+  
+  return(center)
+}
+
+
+cluster_centers_2 = function(df, clust_id){
+  
+  df_out = df %>% 
+    ungroup() %>% 
+    filter(cluster_id == clust_id) %>% 
+    group_by(Week_Display, Week, cluster_id) %>% 
+    summarise(Sales = mean(Sales)) %>% 
+    mutate(Product_Code = 'cluster_avg') %>% 
+    relocate(Product_Code, cluster_id, Week, Sales, Week_Display)
+    
+  return(df_out)
+}
+
+
+# function to add center to time series data
+bind_data = function(df, center, clust_id){
+  
+  df_out = df %>% 
+    filter(cluster_id == clust_id)
+  
+  df_out = df_out %>% 
+    bind_rows(center) %>% 
+    mutate(is_avg = if_else(Product_Code == 'cluster_avg', 'Y', 'N'))
+  
+  return(df_out)
+}
+
+
+# Function for generating cluster plot
+cluster_plot = function(df, clust_id, min_sales, max_sales){
+  df = df %>% 
+    ungroup()
+  
+  p = ggplot(df, aes(x = Week_Display, y = Sales, color = is_avg)) +
+  geom_line(aes(group=Product_Code)) +
+  gghighlight(Product_Code == 'cluster_avg', use_direct_label = FALSE) +
+  scale_y_continuous(limits = c(min_sales, max_sales)) +
+  theme_minimal() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = 'none') +
+  labs(x = 'Week',
+       y = 'Weekly Sales')
+       #title = str_c('Cluster ', clust_id))
+  
+  return(p)
+  
+}
+```
+
+## Clustering with Matrix B
+
+```{r message=FALSE, warning=FALSE}
+library(patchwork)
+
+# Dataframe holding all values
+df_p = data.frame(X) %>% 
+  bind_cols(Product_Code =df_sales$Product_Code) %>% 
+  bind_cols(cluster_id = k_means$cluster) %>% 
+  pivot_longer(cols = W0:W51, names_to = 'Week', values_to = 'Sales') %>% 
+  mutate(Week_Display = rep(seq(0, 51, 1), times = 811))
+
+# Cluster centers
+center_1 = cluster_centers(B_centers, clust_id = 1, F_mat=F_mat)
+center_2 = cluster_centers(B_centers, clust_id = 2, F_mat=F_mat)
+center_3 = cluster_centers(B_centers, clust_id = 3, F_mat=F_mat)
+center_4 = cluster_centers(B_centers, clust_id = 4, F_mat=F_mat)
+center_5 = cluster_centers(B_centers, clust_id = 5, F_mat=F_mat)
+center_6 = cluster_centers(B_centers, clust_id = 6, F_mat=F_mat)
+
+
+# subset for each cluster
+df_1 = bind_data(df_p, center_1, clust_id = 1)
+df_2 = bind_data(df_p, center_2, clust_id = 2)
+df_3 = bind_data(df_p, center_3, clust_id = 3)
+df_4 = bind_data(df_p, center_4, clust_id = 4)
+df_5 = bind_data(df_p, center_5, clust_id = 5)
+df_6 = bind_data(df_p, center_6, clust_id = 6)
+
+
+# Variables for scale of y-axis
+min_sales = min(df_p$Sales)
+max_sales = max(df_p$Sales)
+
+# Plot of weekly sales for each cluster
+p1 = cluster_plot(df_1, clust_id = 1, min_sales, max_sales)
+p2 = cluster_plot(df_2, clust_id = 2, min_sales, max_sales)
+p3 = cluster_plot(df_3, clust_id = 3, min_sales, max_sales)
+p4 = cluster_plot(df_4, clust_id = 4, min_sales, max_sales)
+p5 = cluster_plot(df_5, clust_id = 5, min_sales, max_sales)
+p6 = cluster_plot(df_6, clust_id = 6, min_sales, max_sales)
+
+p_final = (p1 + p2 + p3) / (p4 + p5 + p6)
+p_final
+
+
+```
+
+## Clustering with Matrix X
+
+```{r message=FALSE, warning=FALSE}
+
+set.seed(2021)
+
+k_means = kmeans(X, centers = 6)
+
+
+X_cluster = data.frame(X) %>% 
+  bind_cols(cluster_id = k_means$cluster)
+
+X_centers = X_cluster %>% 
+  pivot_longer(cols = W0:W51, names_to = 'Week_id', values_to = 'col_value') %>% 
+  mutate(col_id = as.numeric(str_replace(Week_id, "W", ""))) %>% 
+  group_by(cluster_id, col_id, Week_id) %>% 
+  summarise(row_mean = mean(col_value))
+
+```
+
+
+```{r message=FALSE, warning=FALSE}
+df_p = data.frame(X) %>% 
+  bind_cols(Product_Code =df_sales$Product_Code) %>% 
+  bind_cols(cluster_id = k_means$cluster) %>% 
+  pivot_longer(cols = W0:W51, names_to = 'Week', values_to = 'Sales') %>% 
+  mutate(Week_Display = rep(seq(0, 51, 1), times = 811))
+
+
+# Cluster centers
+center_1 = cluster_centers_2(df_p, clust_id = 1)
+center_2 = cluster_centers_2(df_p, clust_id = 2)
+center_3 = cluster_centers_2(df_p, clust_id = 3)
+center_4 = cluster_centers_2(df_p, clust_id = 4)
+center_5 = cluster_centers_2(df_p, clust_id = 5)
+center_6 = cluster_centers_2(df_p, clust_id = 6)
+
+
+# subset for each cluster
+df_1 = bind_data(df_p, center_1, clust_id = 1)
+df_2 = bind_data(df_p, center_2, clust_id = 2)
+df_3 = bind_data(df_p, center_3, clust_id = 3)
+df_4 = bind_data(df_p, center_4, clust_id = 4)
+df_5 = bind_data(df_p, center_5, clust_id = 5)
+df_6 = bind_data(df_p, center_6, clust_id = 6)
+
+
+# Variables for scale of y-axis
+min_sales = min(df_p$Sales)
+max_sales = max(df_p$Sales)
+
+# Plot of weekly sales for each cluster
+p1 = cluster_plot(df_1, clust_id = 1, min_sales, max_sales)
+p2 = cluster_plot(df_2, clust_id = 2, min_sales, max_sales)
+p3 = cluster_plot(df_3, clust_id = 3, min_sales, max_sales)
+p4 = cluster_plot(df_4, clust_id = 4, min_sales, max_sales)
+p5 = cluster_plot(df_5, clust_id = 5, min_sales, max_sales)
+p6 = cluster_plot(df_6, clust_id = 6, min_sales, max_sales)
+
+p_final = (p1 + p2 + p3) / (p4 + p5 + p6)
+p_final
+
+
+```
+
+
+# Part III: Ridgeless and Double Descent
+
+## Read Data and Ridgeless Function
+
+```{r pca, message=FALSE, warning=FALSE}
+# clear memory
+rm(list = ls())
+
+data = read_csv('Coding3_dataH.csv', col_names = FALSE)
+
+set.seed(2021)
+# IDs for train/test split
+test.id = sample(c(1:nrow(data)), size = c(nrow(data)*0.75))
+
+train = data[-test.id, ]
+test = data[test.id, ]
+
+
+
+# Ridgeless function
+ridgeless = function(train, test){
+  
+  # Get response vector
+  train_y = as.matrix(train[,1])
+  test_y = as.matrix(test[,1])
+  
+  # Get train/test matrix
+  train_x = train[,-1]
+  test_x = test[,-1]
+  
+  # Center train and test X matrix
+  train_x = scale(train_x, scale = FALSE)
+  test_x = scale(test_x, scale = FALSE)
+  
+  # SVD
+  x_svd = svd(train_x)
+  
+  # K singular values
+  k = sum(x_svd$d > 1*exp(-10))
+  
+  # Feature matrix, then truncated to k columns
+  F_mat = train_x %*% x_svd$v
+  F_trunc = F_mat[,1:k]
+  
+  # Regression
+  # add intercept
+  F_trunc = cbind(intercept = rep(1, dim(F_trunc)[1]), F_trunc)
+  
+  # calculate beta vector 
+  B_hat = solve(t(F_trunc) %*% F_trunc) %*% t(F_trunc) %*% train_y
+  B_hat = B_hat[1:k]
+  
+  
+  # X_hat matrix
+  x_hat = test_x %*% x_svd$v
+  x_hat=  x_hat[,1:k]
+  
+  mspe = mean((test_y - (x_hat %*% B_hat))^2 )
+  return(mspe)
+  
+}
+
+
+```
+
+
+## Simulation Study
+
+```{r simulation, message=FALSE, warning=FALSE}
+set.seed(2021)
+# Results matrix
+results = matrix(0, nrow = 236, ncol = 30)
+
+t = 30
+
+for(i in 1:t){
+  
+  # IDs for train/test split
+  test.id = sample(c(1:nrow(data)), size = c(nrow(data)*0.75))
+  
+  train = data[-test.id, ]
+  test = data[test.id, ]
+  
+  for(j in 6:241){
+    train_j = train[, 1:j]
+    test_j = test[, 1:j]
+    
+    tmp = ridgeless(train_j, test_j)
+    
+    results[j-5, i] = tmp
+
+  }
+ 
+}
+
+
+
+
+```
+
+## Visualize Simulation Results
+
+```{r visualize results}
+
+# Get median error for each number of features
+median_mspe = apply(results, 1, median)
+
+# dataframe for graphic
+df_p = tibble(num_features = c(6:241),
+              median_error = log(median_mspe))
+
+p = ggplot(df_p, aes(x = num_features, y = median_error)) +
+  geom_point(color = 'purple', fill = 'purple', alpha = 0.5) +
+  #scale_y_continuous(trans = 'log10') +
+  theme_minimal() +
+  labs(x = '# of Features',
+       y = 'Log of MSPE',
+       title = 'Median MSPE by Number of Features')
+
+p
+```
+

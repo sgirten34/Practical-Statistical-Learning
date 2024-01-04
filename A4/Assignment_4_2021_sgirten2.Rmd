@@ -1,0 +1,77 @@
+---
+title: "Assignment 4"
+author: "Scott Girten"
+date: "10/22/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Part 1: EM Algorithm Implementation
+
+```{r}
+library(tidyverse)
+
+df = read.table('faithful.dat')
+
+p = c(10)
+
+n = length(df$eruptions)
+
+p1 = 10/n
+p2 = 1 - p1
+
+#cluster = c(rep(1, 10), rep(2, 262))
+#df = df %>% bind_cols(cluster = cluster)
+
+mu_1 = df[1:10, ] %>%
+  #filter(cluster == 1) %>%  
+  summarise(eruptions = mean(eruptions),
+            waiting = mean(waiting))
+
+mu_2 = df[11:272, ] %>%
+  summarise(eruptions = mean(eruptions),
+            waiting = mean(waiting))
+
+mu = as.matrix(mu_1 %>% bind_rows(mu_2))
+mu = t(mu)
+
+df = as.matrix(df)  
+sigma = sum((df[1:10,] - mu[, 1])%*%t(df[1:10,] - mu[, 1])) + sum((df[11:272,] - mu[, 2])%*%t(df[11:272,] - mu[, 2]))
+sigma = (df[1:10,] - mu[, 1])%*%t(df[1:10,] - mu[, 1])
+
+
+# E-step
+#Estep = function(df){}
+  df = as.matrix(df)
+  
+  A = t(df)
+  E = A %*% df
+  
+  
+  
+  t = inv(A)()
+
+
+# M-step
+Mstep = function(){}
+
+
+# log liklihood
+loglik = function(){}
+
+
+# main function
+myEM = function(data, G, p, itmax){
+  
+  
+  # E-step
+  
+  
+  
+}
+
+```
+

@@ -1,0 +1,151 @@
+---
+title: "Assignment 5"
+author: "Scott Girten"
+date: "11/19/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Scott Girten  
+NetID: sgirten2
+
+
+
+
+### Library Tidyverse then Read Training and Testing Data 
+
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+
+train_data = read_csv('coding5_train.csv')
+test_data = read_csv('coding5_test.csv')
+```
+
+### Basic Cleaning and Transforming of Data
+
+```{r}
+# Training feature matrix and labels
+train_x = train_data[, 1:256]
+train_y = train_data[, 257]
+train_y = if_else(train_y == 5, -1, 1)   # Re-code labels at -1 and 1 for and 5 and 6 respectively
+
+# Testing feature matrix and labels
+test_x = test_data[, 1:256]
+intercept_test = rep(1, nrow(test_x))   # Create and add intercept column to testing matrix
+test_x = cbind(intercept_test, test_x)
+
+# Testing labels and re-coding of 5 and 6 to -1 and 1
+test_y = test_data[, 257]
+test_y = if_else(test_y == 5,  -1, 1)
+
+# x and y training matrices for use in the algorithm
+x = as.matrix(train_x)
+y = as.matrix(train_y)
+
+```
+
+### Implement Pegasos Algorithm
+
+```{r}
+# Number of epochs
+epochs = 20
+
+# Initialize Beta, alpha and t
+B = matrix(0, nrow = 1, ncol = ncol(x))  # Beta vector
+a = 0                                    # Intercept term
+t = 0
+
+# add intercept term to X matrix
+# Create X_ and Y_ matrices to hold initial sorted data for calculating accuracy of training data
+intercept = rep(1, nrow(x))
+X_ = cbind(intercept, x)
+Y_ = y
+
+n = nrow(x)   # Number of rows for controlling inner loop
+lambda = 1    # Default lambda setting
+
+
+for(epoch in 1:epochs){
+  # Set random index order for randomizing data points
+  
+  set.seed(100 + epoch*10)  # set seed for each epoch
+  idx = sample(1:nrow(x))   # list of index to shuffle by
+  x = x[idx, ]              # shuffle data
+  y = as.matrix(y[idx])     # shuffle labels
+  
+  
+  # Iterate over every data point to calculate gradient
+  for(i in 1:n){
+    t = t+1
+    eta = 1/(t*lambda)
+    
+    # Calculate gradient
+    gradient = y[i] * (B %*% x[i, ] + a)
+    
+    # Calculate parameter updates
+    if(gradient < 1){
+      delta_t = lambda*B - y[i]*x[i, ]
+      gamma_t = -1*y[i]
+    }
+    else{
+      delta_t = lambda*B
+      gamma_t = 0
+    }
+    
+    # Update Beta vector and intercept term
+    B = B - eta*delta_t
+    a = a - eta*gamma_t
+    
+  }
+}
+# End loops and algorithm implementation
+
+# Add intercept term to Beta vector for making predictions
+B_ = cbind(a, B)
+```
+
+### Prediction of Training and Testing Data
+
+```{r}
+# Prediction for Training and Testing Data
+pred_train = B_ %*% t(X_)
+pred_test = B_ %*% t(as.matrix(test_x))
+
+# Classify prediction based on sign of the predicted value
+pred_train = if_else(pred_train > 0, 6, 5)
+pred_test = if_else(pred_test > 0, 6, 5)
+
+```
+
+### Confusion Matrix - Training 
+```{r}
+y_label = train_data[,257]$Y
+
+conf_mat_train = table(y_label, pred_train)
+error_train = scales::percent((conf_mat_train[1,2] + conf_mat_train[2,1]) / sum(conf_mat_train), 0.1)
+
+conf_mat_train
+```
+
+The error of the training data after 20 epochs is `r error_train`.
+
+
+### Confusion Matrix - Testing
+```{r}
+y_label_test = test_data[,257]$Y
+
+
+conf_mat_test = table(y_label_test, pred_test)
+error_test = scales::percent((conf_mat_test[1,2] + conf_mat_test[2,1]) / sum(conf_mat_test), 0.1)
+conf_mat_test
+
+```
+
+The error of the testing data after 20 epochs is `r error_test`.
+
+
+
+***
